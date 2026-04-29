@@ -1,2 +1,1 @@
-# AI_DRIVEN_RETAIL_OPTIMIZATION_ENGINE
-C:\Users\USER\Desktop\AI_DRIVEN_OPTIMIZATION_ENGINE\ai_driven_optimization_engine\data\raw
+This project aims to develop an affordable, AI-driven Retail Demand Pulse and Automatic Replenishment System tailored for Kenyan SMEs. The system will continuously analyse real-time transaction data alongside external contextual signals to deliver accurate demand forecasts, stock health scores, spoilage risk alerts, and optimal reorder recommendations.
