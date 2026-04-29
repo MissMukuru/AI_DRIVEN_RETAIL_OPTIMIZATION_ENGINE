@@ -1,0 +1,2 @@
+# AI_DRIVEN_RETAIL_OPTIMIZATION_ENGINE
+C:\Users\USER\Desktop\AI_DRIVEN_OPTIMIZATION_ENGINE\ai_driven_optimization_engine\data\raw
