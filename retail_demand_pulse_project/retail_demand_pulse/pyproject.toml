@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name            = "retail-demand-pulse"
+version         = "0.1.0"
+description     = "AI-Driven Retail Demand Pulse & Automatic Replenishment System for Kenyan SMEs"
+readme          = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "scikit-learn>=1.4",
+    "xgboost>=2.0",
+    "tensorflow>=2.16",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "loguru>=0.7",
+    "tqdm>=4.66",
+    "typer>=0.12",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+rdp-pipeline           = "retail_demand_pulse.pipeline:app"
+rdp-dataset            = "retail_demand_pulse.dataset:app"
+rdp-clean              = "retail_demand_pulse.clean:app"
+rdp-eda                = "retail_demand_pulse.eda:app"
+rdp-features           = "retail_demand_pulse.features:app"
+rdp-train-demand       = "retail_demand_pulse.train_demand:app"
+rdp-train-spoilage     = "retail_demand_pulse.train_spoilage:app"
+rdp-anomaly-detection  = "retail_demand_pulse.anomaly_detection:app"
+rdp-replenishment      = "retail_demand_pulse.replenishment:app"
