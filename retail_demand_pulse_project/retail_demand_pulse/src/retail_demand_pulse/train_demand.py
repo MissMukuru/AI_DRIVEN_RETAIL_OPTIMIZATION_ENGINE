@@ -341,10 +341,7 @@ def plot_model_comparison(xgb_metrics: dict, lstm_metrics: dict) -> None:
     plt.close(fig)
     logger.success("Model comparison chart saved → {}", path.name)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # CLI entry-point
-# ─────────────────────────────────────────────────────────────────────────────
 
 @app.command()
 def main(

@@ -108,23 +108,25 @@ WEATHER_PROFILES = {
     12: (21, 0.30, 10, [0.35, 0.28, 0.18, 0.14, 0.05]),
 }
 
-# ── Modelling hyper-parameters ────────────────────────────────────────────────
+# Modelling hyper-parameters
 XGBOOST_PARAMS = {
-    "n_estimators": 500,
-    "max_depth": 6,
-    "learning_rate": 0.05,
+    "n_estimators": 100,
+    "max_depth": 4,
+    "learning_rate": 0.1,
     "subsample": 0.8,
     "colsample_bytree": 0.8,
+    "tree_method": "hist",
     "random_state": RANDOM_SEED,
-    "n_jobs": -1,
+    "n_jobs": -1
 }
+ 
 
 LSTM_LOOKBACK    = 14   # days of history fed to the LSTM
 LSTM_EPOCHS      = 30
 LSTM_BATCH_SIZE  = 32
 LSTM_UNITS       = 64
 
-# ── Replenishment defaults ────────────────────────────────────────────────────
+# ── Replenishment defaults ───\
 DEFAULT_LEAD_TIME_DAYS  = 2
 SAFETY_STOCK_FACTOR     = 1.5   # safety_stock = factor * std(demand)
 LOW_STOCK_THRESHOLD     = 0.25  # reorder when stock < 25 % of max

@@ -33,10 +33,7 @@ from retail_demand_pulse.config import (
 
 app = typer.Typer()
 
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Feature engineering helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _add_lag_features(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -187,9 +184,7 @@ def _fill_lag_nans(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ─────────────────────────────────────────────────────────────────────────────
 # CLI entry-point
-# ─────────────────────────────────────────────────────────────────────────────
 
 @app.command()
 def main(
@@ -202,7 +197,7 @@ def main(
     df = pd.read_csv(input_path, parse_dates=["date"])
     logger.info("  {:,} rows × {} columns", *df.shape)
 
-    # ── Feature engineering ───────────────────────────────────────────────
+    # ── Feature engineering
     df = _add_lag_features(df)
     df = _add_rolling_features(df)
     df = _add_cyclical_features(df)
@@ -210,11 +205,11 @@ def main(
     df = _add_price_features(df)
     df = _fill_lag_nans(df)
 
-    # ── Encoding & scaling ────────────────────────────────────────────────
+    # ── Encoding & scaling
     df = _encode_categoricals(df)
     df = _scale_numerics(df)
 
-    # ── Final sort & save ─────────────────────────────────────────────────
+    # ── Final sort & save
     df = df.sort_values(["product_id", "date"]).reset_index(drop=True)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,33 @@
+# Virtual environments
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Uploads
+uploads/
+
+# Large model files
+*.pkl
+*.keras
+*.h5
+
+# Generated datasets
+data/interim/
+data/processed/
+
+# Generated reports
+reports/figures/
+
+# Environment variables
+.env
+
+# Jupyter
+.ipynb_checkpoints/

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Retail Demand Pulse</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #ffe4f3, #f0d6ff);
+      margin: 0;
+      padding: 20px;
+      color: #333;
+    }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { color: #d63384; text-align: center; font-size: 2.8rem; margin-bottom: 5px; }
+    .subtitle { text-align: center; color: #9c4aa8; font-size: 1.3rem; margin-bottom: 30px; }
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 25px;
+      margin: 20px 0;
+      box-shadow: 0 10px 30px rgba(214, 51, 132, 0.15);
+    }
+    button {
+      background: #ff69b4;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-size: 1.1rem;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: bold;
+      margin: 10px 5px;
+    }
+    button:hover { background: #db2778; transform: scale(1.05); }
+    input, select {
+      padding: 12px;
+      border-radius: 8px;
+      border: 2px solid #ff99cc;
+      width: 100%;
+      margin: 8px 0;
+    }
+    .result {
+      background: #f0fdf4;
+      padding: 20px;
+      border-radius: 12px;
+      margin-top: 20px;
+      border-left: 6px solid #22c55e;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🛍️ Retail Demand Pulse</h1>
+    <p class="subtitle">Helping you make smart stocking decisions</p>
+
+    <!-- Single Product Predictor -->
+    <div class="card">
+      <h2>🔮 Predict Today's Replenishment</h2>
+      <form id="predictForm">
+        <label>Product Name</label>
+        <input type="text" id="product_name" value="Washing Powder (500g)" required>
+
+        <label>Category</label>
+        <select id="category">
+          <option value="Household">Household</option>
+          <option value="Food & Beverages">Food & Beverages</option>
+          <option value="Personal Care">Personal Care</option>
+          <option value="Dairy">Dairy</option>
+          <option value="Cleaning">Cleaning</option>
+        </select>
+
+        <label>Is Perishable?</label>
+        <select id="is_perishable">
+          <option value="0">No</option>
+          <option value="1">Yes</option>
+        </select>
+
+        <label>Current Stock</label>
+        <input type="number" id="current_stock" value="225" required>
+
+        <label>Average Daily Sales</label>
+        <input type="number" id="avg_daily" value="10.03" step="0.01" required>
+
+        <label>Expected Sales Today / Tomorrow</label>
+        <input type="number" id="forecasted" value="17" step="0.01" required>
+
+        <button type="submit">Predict Replenishment</button>
+      </form>
+
+      <div id="result" class="result" style="display: none;"></div>
+    </div>
+
+    <!-- Upload Section -->
+    <div class="card">
+      <h2>📤 Upload Full Dataset</h2>
+      <input type="file" id="csvFile" accept=".csv">
+      <button onclick="uploadAndProcess()">Process Dataset + Generate Report</button>
+    </div>
+
+    <div class="card">
+      <h2>📊 Reports</h2>
+      <button onclick="downloadReport()">Download Latest Replenishment Report</button>
+    </div>
+  </div>
+
+  <script>
+    // Predict Single Product
+    document.getElementById('predictForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const formData = new FormData();
+      formData.append('product_name', document.getElementById('product_name').value);
+      formData.append('category', document.getElementById('category').value);
+      formData.append('is_perishable', document.getElementById('is_perishable').value);
+      formData.append('current_stock', document.getElementById('current_stock').value);
+      formData.append('avg_daily', document.getElementById('avg_daily').value);
+      formData.append('forecasted_demand_per_day', document.getElementById('forecasted').value);
+
+      try {
+        const res = await fetch('/predict/replenishment', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+
+        document.getElementById('result').innerHTML = `
+          <h3>${data.product_name}</h3>
+          <p><strong>Status:</strong> ${data.stock_status}</p>
+          <p><strong>Days Remaining:</strong> ${data.days_of_stock_remaining}</p>
+          <p><strong>Priority:</strong> ${data.replenishment_priority}</p>
+          <p><strong>Recommended Order:</strong> ${data.recommended_order_qty} units</p>
+          <p><strong>Estimated Cost:</strong> KES ${data.estimated_order_cost_kes}</p>
+        `;
+        document.getElementById('result').style.display = 'block';
+      } catch (err) {
+        alert("Error connecting to server: " + err);
+      }
+    });
+
+    // Upload and Process
+    async function uploadAndProcess() {
+      const fileInput = document.getElementById('csvFile');
+      if (!fileInput.files[0]) {
+        alert("Please select a CSV file first");
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+
+      try {
+        const res = await fetch('/upload-and-process', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        alert("✅ Success! " + (data.message || "Dataset processed and report generated"));
+      } catch (err) {
+        alert("Error: " + err);
+      }
+    }
+
+    // Download Report
+    async function downloadReport() {
+      window.location.href = '/replenishment/report';
+    }
+  </script>
+</body>
+</html>

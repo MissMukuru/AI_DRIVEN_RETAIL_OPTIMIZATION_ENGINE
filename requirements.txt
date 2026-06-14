@@ -1,0 +1,13 @@
+# This is the requirements file for the Retail Demand Pulse project.
+# It includes all the dependencies required to build and run the project.
+
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.4
+xgboost>=2.0
+tensorflow>=2.16
+matplotlib>=3.8
+seaborn>=0.13
+loguru>=0.7
+tqdm>=4.66
+typer>=0.12
