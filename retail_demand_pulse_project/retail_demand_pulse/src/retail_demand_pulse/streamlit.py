@@ -3,6 +3,8 @@ import pandas as pd
 import os
 from pathlib import Path
 
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+
 st.set_page_config(page_title="Retail Demand Pulse", page_icon="🛍️", layout="wide")
 
 # Pink Theme
@@ -55,7 +57,7 @@ elif page == "🔮 Predict Replenishment":
                         "avg_daily": avg_daily,
                         "forecasted_demand_per_day": forecasted
                     }
-                    response = requests.post("http://localhost:8000/predict/replenishment", data=payload)
+                    response = requests.post(f"{API_BASE_URL}/predict/replenishment", data=payload)
                     if response.status_code == 200:
                         data = response.json()
                         st.success("✅ Recommendation Ready!")
@@ -81,7 +83,7 @@ elif page == "📤 Upload Dataset":
             try:
                 import requests
                 files = {'file': (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-                response = requests.post("http://localhost:8000/upload-and-process", files=files)
+                response = requests.post(f"{API_BASE_URL}/upload-and-process", files=files)
                 if response.status_code == 200:
                     st.success("✅ Processing Complete! Check Reports tab.")
                     st.json(response.json())
@@ -95,7 +97,7 @@ elif page == "📊 Reports":
     st.subheader("📊 Replenishment Dashboard")
     
     # Direct file path from your logs
-    report_path = r"C:\Users\USER\Desktop\AI_DRIVEN_OPTIMIZATION_ENGINE\retail_demand_pulse_project\data\processed\replenishment_report.csv"
+    report_path = Path(__file__).resolve().parents[3] / "data" / "processed" / "replenishment_report.csv"
     
     if os.path.exists(report_path):
         try:

@@ -1,0 +1,28 @@
+services:
+  backend:
+    build: .
+    container_name: retail-demand-backend
+    ports:
+      - "8000:8000"
+    command: >-
+      uvicorn retail_demand_pulse.main:app
+      --app-dir retail_demand_pulse_project/retail_demand_pulse/src
+      --host 0.0.0.0
+      --port 8000
+    volumes:
+      - ./retail_demand_pulse_project/data:/app/retail_demand_pulse_project/data
+
+  frontend:
+    build: .
+    container_name: retail-demand-frontend
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    environment:
+      API_BASE_URL: http://backend:8000
+    command: >-
+      streamlit run
+      retail_demand_pulse_project/retail_demand_pulse/src/retail_demand_pulse/streamlit.py
+      --server.address=0.0.0.0
+      --server.port=8501
