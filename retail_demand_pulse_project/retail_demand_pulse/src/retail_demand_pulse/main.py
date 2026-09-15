@@ -109,24 +109,25 @@ def _forecast_next_day(df: pd.DataFrame, target_date: Optional[pd.Timestamp] = N
     last_rows["trend_day"] = (target - df["date"].min()).days
 
     model_path = MODELS_DIR / "xgboost_demand.pkl"
-    if model_path.exists():
-        with model_path.open("rb") as model_file:
-            artefact = pickle.load(model_file)
-        features = artefact["features"]
-        predictions = np.clip(
-            artefact["model"].predict(last_rows[features].fillna(0)), 0, None
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"Demand model not found at {model_path}. "
+            "Run the pipeline with run_training=true before generating a report."
         )
-        source = "xgboost_demand"
-    else:
-        recent = df[df["date"] >= df["date"].max() - pd.Timedelta(days=14)]
-        predictions = (
-            recent.groupby("product_id", observed=True)["quantity_sold"]
-            .mean()
-            .reindex(last_rows["product_id"])
-            .fillna(0)
-            .to_numpy()
+
+    with model_path.open("rb") as model_file:
+        artefact = pickle.load(model_file)
+    features = artefact["features"]
+    missing_features = sorted(set(features) - set(last_rows.columns))
+    if missing_features:
+        raise ValueError(
+            "The feature dataset does not contain the trained model features: "
+            + ", ".join(missing_features)
         )
-        source = "rolling_mean_fallback"
+    predictions = np.clip(
+        artefact["model"].predict(last_rows[features].fillna(0)), 0, None
+    )
+    source = "xgboost_demand"
 
     return pd.DataFrame({
         "product_id": last_rows["product_id"].to_numpy(),
@@ -143,6 +144,12 @@ def _forecast_next_day(df: pd.DataFrame, target_date: Optional[pd.Timestamp] = N
 def generate_replenishment_report(input_path: Path = PROCESSED_DATASET) -> pd.DataFrame:
     """Create the per-product report from the trained model's next-day forecast."""
     from retail_demand_pulse.replenishment import compute_replenishment
+
+    if not (MODELS_DIR / "xgboost_demand.pkl").exists():
+        raise FileNotFoundError(
+            "Cannot generate a replenishment report without a trained demand model. "
+            "Enable run_training or train the demand model first."
+        )
 
     df = pd.read_csv(input_path, parse_dates=["date"])
     report = compute_replenishment(df)
