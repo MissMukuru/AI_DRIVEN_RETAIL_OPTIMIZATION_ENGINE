@@ -1,11 +1,12 @@
 """FastAPI application for model-driven next-day retail replenishment."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 import pickle
 import shutil
 import tempfile
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -18,11 +19,15 @@ from loguru import logger
 from retail_demand_pulse.config import (
     DEFAULT_LEAD_TIME_DAYS,
     KENYAN_HOLIDAYS,
+    CURRENT_PRICE_AS_OF,
+    CURRENT_PRICES_KES,
+    kenyan_holidays_for_year,
     MODELS_DIR,
     PROCESSED_DATA_DIR,
     PROCESSED_DATASET,
     RAW_DATASET,
     SAFETY_STOCK_FACTOR,
+    WEATHER_PROFILES,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -39,10 +44,20 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 
 def to_native(value):
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, dict):
+        return {str(key): to_native(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_native(item) for item in value]
     if isinstance(value, np.generic):
-        return value.item()
+        return to_native(value.item())
     if isinstance(value, np.ndarray):
-        return value.tolist()
+        return to_native(value.tolist())
+    if isinstance(value, (pd.Timestamp, pd.Timedelta)):
+        return value.isoformat()
+    if pd.isna(value):
+        return None
     return value
 
 
@@ -67,47 +82,130 @@ def process_dataset(input_path: Path) -> Path:
 
 
 def _school_event(target: pd.Timestamp) -> Optional[str]:
-    windows = {
-        (1, range(3, 10)): "school opening",
-        (5, range(3, 10)): "school term restart",
-        (9, range(3, 10)): "school term restart",
-    }
-    for (month, days), label in windows.items():
-        if target.month == month and target.day in days:
-            return label
+    term = _school_term(target)
+    if term is None:
+        return None
+    if target.day <= 14 and target.month in (1, 5, 9):
+        return f"{term} opening"
+    return term
+
+
+def _school_term(target: pd.Timestamp) -> Optional[str]:
+    """Return the local three-term school calendar used for demand context."""
+    if 1 <= target.month <= 4:
+        return "school term 1"
+    if 5 <= target.month <= 8:
+        return "school term 2"
+    if 9 <= target.month <= 10:
+        return "school term 3"
     return None
 
 
+def _holiday_name(target: pd.Timestamp) -> Optional[str]:
+    holiday_name = kenyan_holidays_for_year(target.year).get(target.strftime("%Y-%m-%d"))
+    if holiday_name:
+        return holiday_name
+    exact_name = KENYAN_HOLIDAYS.get(target.strftime("%Y-%m-%d"))
+    if exact_name:
+        return exact_name
+    month_day = target.strftime("-%m-%d")
+    return next(
+        (name for holiday_date, name in KENYAN_HOLIDAYS.items()
+         if holiday_date.endswith(month_day)),
+        None,
+    )
+
+
 def _neighbourhood_activity(target: pd.Timestamp) -> int:
-    if _school_event(target):
+    if _school_event(target) and target.day <= 14:
         return 2
+    if _school_term(target):
+        return 1
     if target.weekday() in (1, 4) or target.day >= 28:
         return 1
     return 0
 
 
-def _forecast_next_day(df: pd.DataFrame, target_date: Optional[pd.Timestamp] = None) -> pd.DataFrame:
-    """Predict tomorrow per product using the trained demand model and event context."""
-    target = target_date or (df["date"].max() + pd.Timedelta(days=1))
-    last_rows = (
+def _expected_weather(target: pd.Timestamp) -> dict:
+    """Build a deterministic future weather row from the configured profile."""
+    temperature, rain_probability, average_rain, weights = WEATHER_PROFILES[target.month]
+    conditions = ["Sunny", "Partly Cloudy", "Overcast", "Light Rain", "Heavy Rain"]
+    condition = conditions[int(np.argmax(weights))]
+    rainfall = average_rain * rain_probability if condition != "Sunny" else 0.0
+    return {
+        "temperature_avg": float(temperature),
+        "rainfall_mm": float(rainfall),
+        "weather_condition": condition,
+    }
+
+
+def _current_kenya_date() -> pd.Timestamp:
+    return pd.Timestamp(datetime.now(ZoneInfo("Africa/Nairobi")).date())
+
+
+def _apply_current_prices(df: pd.DataFrame) -> pd.DataFrame:
+    """Use the dated catalogue for economics while preserving product identity."""
+    result = df.copy()
+    for product_id, prices in CURRENT_PRICES_KES.items():
+        mask = result["product_id"].eq(product_id)
+        for column, value in prices.items():
+            if column in result.columns:
+                result.loc[mask, column] = value
+    result["profit_margin"] = (
+        (result["unit_price"] - result["cost_price"]) / result["unit_price"]
+    ).round(4)
+    return result
+
+
+def _future_feature_rows(df: pd.DataFrame, target: pd.Timestamp, features: list[str]) -> pd.DataFrame:
+    """Create one model input row per product for the requested future date."""
+    rows = (
         df.sort_values("date")
         .groupby("product_id", observed=True)
         .tail(1)
         .copy()
     )
-    last_rows["date"] = target
-    last_rows["month"] = target.month
-    last_rows["week_of_year"] = int(target.isocalendar().week)
-    last_rows["weekday_num"] = target.weekday()
-    last_rows["is_weekend"] = int(target.weekday() >= 5)
-    last_rows["is_holiday"] = int(target.strftime("%Y-%m-%d") in KENYAN_HOLIDAYS)
-    last_rows["neighbourhood_activity"] = _neighbourhood_activity(target)
-    last_rows["day_sin"] = np.sin(2 * np.pi * target.dayofyear / 365.25)
-    last_rows["day_cos"] = np.cos(2 * np.pi * target.dayofyear / 365.25)
-    last_rows["month_sin"] = np.sin(2 * np.pi * target.month / 12)
-    last_rows["month_cos"] = np.cos(2 * np.pi * target.month / 12)
-    last_rows["trend_day"] = (target - df["date"].min()).days
+    weather = _expected_weather(target)
+    holiday_name = _holiday_name(target)
+    rows["date"] = target
+    rows["month"] = target.month
+    rows["week_of_year"] = int(target.isocalendar().week)
+    rows["weekday_num"] = target.weekday()
+    rows["is_weekend"] = int(target.weekday() >= 5)
+    rows["is_holiday"] = int(holiday_name is not None)
+    rows["neighbourhood_activity"] = _neighbourhood_activity(target)
+    rows["temperature_avg"] = weather["temperature_avg"]
+    rows["rainfall_mm"] = weather["rainfall_mm"]
+    rows["day_sin"] = np.sin(2 * np.pi * target.dayofyear / 365.25)
+    rows["day_cos"] = np.cos(2 * np.pi * target.dayofyear / 365.25)
+    rows["month_sin"] = np.sin(2 * np.pi * target.month / 12)
+    rows["month_cos"] = np.cos(2 * np.pi * target.month / 12)
+    rows["weekday_sin"] = np.sin(2 * np.pi * target.weekday() / 7)
+    rows["weekday_cos"] = np.cos(2 * np.pi * target.weekday() / 7)
+    rows["trend_day"] = (target - df["date"].min()).days
 
+    encoder_path = MODELS_DIR / "label_encoders.pkl"
+    if "weather_condition_enc" in features and encoder_path.exists():
+        with encoder_path.open("rb") as encoder_file:
+            encoders = pickle.load(encoder_file)
+        encoder = encoders.get("weather_condition")
+        if encoder is not None:
+            rows["weather_condition_enc"] = int(
+                encoder.transform([weather["weather_condition"]])[0]
+            )
+
+    missing_features = sorted(set(features) - set(rows.columns))
+    if missing_features:
+        raise ValueError(
+            "The feature dataset does not contain the trained model features: "
+            + ", ".join(missing_features)
+        )
+    return rows
+
+
+def _forecast_next_day(df: pd.DataFrame, target_date: Optional[pd.Timestamp] = None) -> pd.DataFrame:
+    """Predict tomorrow per product using the trained demand model and event context."""
+    target = target_date or (_current_kenya_date() + pd.Timedelta(days=1))
     model_path = MODELS_DIR / "xgboost_demand.pkl"
     if not model_path.exists():
         raise FileNotFoundError(
@@ -118,12 +216,7 @@ def _forecast_next_day(df: pd.DataFrame, target_date: Optional[pd.Timestamp] = N
     with model_path.open("rb") as model_file:
         artefact = pickle.load(model_file)
     features = artefact["features"]
-    missing_features = sorted(set(features) - set(last_rows.columns))
-    if missing_features:
-        raise ValueError(
-            "The feature dataset does not contain the trained model features: "
-            + ", ".join(missing_features)
-        )
+    last_rows = _future_feature_rows(df, target, features)
     predictions = np.clip(
         artefact["model"].predict(last_rows[features].fillna(0)), 0, None
     )
@@ -135,8 +228,12 @@ def _forecast_next_day(df: pd.DataFrame, target_date: Optional[pd.Timestamp] = N
         "forecasted_demand_per_day": np.round(predictions, 2),
         "forecasted_demand_7d": np.ceil(predictions * 7).astype(int),
         "is_forecast_holiday": bool(last_rows["is_holiday"].iloc[0]),
-        "holiday_name": KENYAN_HOLIDAYS.get(target.strftime("%Y-%m-%d")),
+        "holiday_name": _holiday_name(target),
         "school_event": _school_event(target),
+        "school_term": _school_term(target),
+        "neighbourhood_activity": int(last_rows["neighbourhood_activity"].iloc[0]),
+        "expected_weather": _expected_weather(target)["weather_condition"],
+        "price_catalogue_as_of": CURRENT_PRICE_AS_OF,
         "forecast_model": source,
     })
 
@@ -151,7 +248,7 @@ def generate_replenishment_report(input_path: Path = PROCESSED_DATASET) -> pd.Da
             "Enable run_training or train the demand model first."
         )
 
-    df = pd.read_csv(input_path, parse_dates=["date"])
+    df = _apply_current_prices(pd.read_csv(input_path, parse_dates=["date"]))
     report = compute_replenishment(df)
     forecast = _forecast_next_day(df)
     report = report.drop(columns=["forecasted_demand_per_day", "forecasted_demand_7d"])
@@ -183,6 +280,7 @@ def run_pipeline(input_path: Path, run_training: bool, generate_report: bool) ->
     if generate_report:
         report = generate_replenishment_report(processed_path)
         result["replenishment"] = "completed"
+        result["as_of_date"] = _current_kenya_date().date().isoformat()
         result["forecast_date"] = report["forecast_date"].iloc[0]
         result["products"] = int(len(report))
     return result
@@ -228,6 +326,14 @@ async def get_replenishment_report():
     return FileResponse(REPORT_PATH, filename=REPORT_PATH.name)
 
 
+@app.get("/replenishment/report/json")
+async def get_replenishment_report_json():
+    if not REPORT_PATH.exists():
+        raise HTTPException(404, "Report not found. Generate one first.")
+    report = pd.read_csv(REPORT_PATH)
+    return to_native(report.to_dict(orient="records"))
+
+
 @app.get("/replenishment/products/{product_id}")
 async def get_product_recommendation(product_id: str):
     if not REPORT_PATH.exists():
@@ -267,7 +373,7 @@ async def predict_single_replenishment(
     days_left = round(current_stock / avg_daily, 1) if avg_daily > 0 else 0.0
     status = "OUT OF STOCK" if current_stock == 0 else "CRITICALLY LOW" if days_left < 3 else "LOW" if reorder_needed else "OK"
     priority = "URGENT" if status in {"OUT OF STOCK", "CRITICALLY LOW"} else "HIGH" if status == "LOW" and is_perishable else "MEDIUM" if status == "LOW" else "OK"
-    return {"product_id": product_id, "product_name": product_name, "category": category,
+    response = {"product_id": product_id, "product_name": product_name, "category": category,
             "is_perishable": bool(is_perishable), "shelf_life_days": shelf_life_days,
             "unit_price": unit_price, "cost_price": cost_price, "current_stock": current_stock,
             "avg_daily": avg_daily, "std_daily": std_daily, "forecasted_demand_per_day": forecast,
@@ -276,6 +382,7 @@ async def predict_single_replenishment(
             "stock_status": status, "reorder_needed": reorder_needed,
             "recommended_order_qty": order_qty, "estimated_order_cost_kes": round(order_qty * cost_price, 2),
             "replenishment_priority": priority}
+    return to_native(response)
 
 
 if __name__ == "__main__":

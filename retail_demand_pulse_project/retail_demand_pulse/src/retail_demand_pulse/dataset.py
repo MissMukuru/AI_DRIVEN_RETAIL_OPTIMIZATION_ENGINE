@@ -17,6 +17,7 @@ from tqdm import tqdm
 import typer
 
 from retail_demand_pulse.config import (
+    CURRENT_PRICES_KES,
     KENYAN_HOLIDAYS,
     PRODUCTS,
     RAW_DATASET,
@@ -24,6 +25,7 @@ from retail_demand_pulse.config import (
     START_DATE,
     END_DATE,
     WEATHER_PROFILES,
+    kenyan_holidays_for_year,
 )
 
 app = typer.Typer()
@@ -69,11 +71,11 @@ def _neighbourhood_activity(d: pd.Timestamp) -> int:
         activity = 1
     else:
         activity = 0
-    # School opening weeks: early Jan, early Feb (2nd term), early Sep
-    if (d.month == 1 and 3 <= d.day <= 9) or \
-       (d.month == 5 and 3 <= d.day <= 9) or \
-       (d.month == 9 and 3 <= d.day <= 9):
+    # Three local school terms: Jan-Apr, May-Aug, and Sep-Oct.
+    if d.month in (1, 5, 9) and d.day <= 14:
         activity = 2
+    elif d.month in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+        activity = max(activity, 1)
     # Month-end effect (last 3 days of month)
     if d.day >= 28:
         activity = max(activity, 1)
@@ -206,7 +208,9 @@ def main(
     logger.info("Starting dataset generation for Eldoret Retail Shop (2024-2025)")
 
     dates        = pd.date_range(START_DATE, END_DATE, freq="D")
-    holiday_set  = set(KENYAN_HOLIDAYS.keys())
+    holiday_set = set(KENYAN_HOLIDAYS)
+    for year in range(pd.Timestamp(START_DATE).year, pd.Timestamp(END_DATE).year + 1):
+        holiday_set.update(kenyan_holidays_for_year(year))
 
     logger.info("Simulating daily weather …")
     weather_df = _generate_weather(dates)
@@ -218,6 +222,10 @@ def main(
 
     for product in tqdm(PRODUCTS, desc="Products"):
         pid, name, category, perishable, shelf_life, base_demand, unit_p, cost_p = product
+        current_prices = CURRENT_PRICES_KES.get(pid, {})
+        unit_p = current_prices.get("unit_price", unit_p)
+        cost_p = current_prices.get("cost_price", cost_p)
+        product = (pid, name, category, perishable, shelf_life, base_demand, unit_p, cost_p)
 
         for d in dates:
             date_str   = d.strftime("%Y-%m-%d")

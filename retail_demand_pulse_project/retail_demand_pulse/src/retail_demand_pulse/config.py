@@ -7,6 +7,9 @@ other module can import from a single source of truth.
 """
 
 from pathlib import Path
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from dateutil.easter import easter
 
 # ── Project root (two levels up from this file) ──────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -63,6 +66,49 @@ KENYAN_HOLIDAYS = {
     "2025-12-12": "Jamhuri Day",
     "2025-12-25": "Christmas Day",
     "2025-12-26": "Boxing Day",
+}
+
+
+def kenyan_holidays_for_year(year: int) -> dict[str, str]:
+    """Return Kenya's fixed and movable public holidays for a given year."""
+    holidays = {
+        f"{year}-01-01": "New Year's Day",
+        f"{year}-05-01": "Labour Day",
+        f"{year}-06-01": "Madaraka Day",
+        f"{year}-10-10": "Huduma Day",
+        f"{year}-10-20": "Mashujaa Day",
+        f"{year}-12-12": "Jamhuri Day",
+        f"{year}-12-25": "Christmas Day",
+        f"{year}-12-26": "Boxing Day",
+    }
+    easter_sunday = easter(year)
+    holidays[str(easter_sunday - timedelta(days=2))] = "Good Friday"
+    holidays[str(easter_sunday + timedelta(days=1))] = "Easter Monday"
+    return holidays
+
+
+CURRENT_PRICE_AS_OF = datetime.now(ZoneInfo("Africa/Nairobi")).date().isoformat()
+CURRENT_PRICES_KES = {
+    "P001": {"unit_price": 85.0, "cost_price": 63.0},
+    "P002": {"unit_price": 450.0, "cost_price": 345.0},
+    "P003": {"unit_price": 75.0, "cost_price": 52.0},
+    "P004": {"unit_price": 120.0, "cost_price": 82.0},
+    "P005": {"unit_price": 130.0, "cost_price": 88.0},
+    "P006": {"unit_price": 160.0, "cost_price": 108.0},
+    "P007": {"unit_price": 180.0, "cost_price": 120.0},
+    "P008": {"unit_price": 220.0, "cost_price": 165.0},
+    "P009": {"unit_price": 130.0, "cost_price": 95.0},
+    "P010": {"unit_price": 300.0, "cost_price": 225.0},
+    "P011": {"unit_price": 350.0, "cost_price": 270.0},
+    "P012": {"unit_price": 180.0, "cost_price": 135.0},
+    "P013": {"unit_price": 55.0, "cost_price": 35.0},
+    "P014": {"unit_price": 80.0, "cost_price": 56.0},
+    "P015": {"unit_price": 50.0, "cost_price": 30.0},
+    "P016": {"unit_price": 100.0, "cost_price": 70.0},
+    "P017": {"unit_price": 130.0, "cost_price": 90.0},
+    "P018": {"unit_price": 170.0, "cost_price": 125.0},
+    "P019": {"unit_price": 25.0, "cost_price": 14.0},
+    "P020": {"unit_price": 130.0, "cost_price": 90.0},
 }
 
 # ── Product catalogue ─────────────────────────────────────────────────────────
