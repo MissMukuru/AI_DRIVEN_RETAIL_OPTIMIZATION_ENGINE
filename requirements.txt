@@ -16,3 +16,4 @@ uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 streamlit>=1.32
 requests>=2.31
+python-dateutil>=2.9

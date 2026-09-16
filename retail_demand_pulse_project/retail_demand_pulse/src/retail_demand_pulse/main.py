@@ -203,6 +203,65 @@ def _future_feature_rows(df: pd.DataFrame, target: pd.Timestamp, features: list[
     return rows
 
 
+def _parse_recent_sales(value: str) -> list[float]:
+    if not value.strip():
+        return []
+    try:
+        sales = [float(item.strip()) for item in value.split(",") if item.strip()]
+    except ValueError as exc:
+        raise ValueError("recent_sales must be comma-separated numbers") from exc
+    if any(sale < 0 for sale in sales):
+        raise ValueError("recent_sales cannot contain negative values")
+    return sales[-14:]
+
+
+def _scenario_forecast(
+    product_id: str,
+    target: pd.Timestamp,
+    recent_sales: list[float],
+    weather_condition: Optional[str],
+) -> dict:
+    """Run the trained model for an owner-entered what-if scenario."""
+    df = _apply_current_prices(pd.read_csv(PROCESSED_DATASET, parse_dates=["date"]))
+    if product_id not in set(df["product_id"].astype(str)):
+        raise ValueError(f"Unknown product_id {product_id}. Choose a product from the catalogue.")
+
+    with (MODELS_DIR / "xgboost_demand.pkl").open("rb") as model_file:
+        artefact = pickle.load(model_file)
+    features = artefact["features"]
+    rows = _future_feature_rows(df[df["product_id"].astype(str) == product_id], target, features)
+
+    if recent_sales:
+        recent = np.asarray(recent_sales, dtype=float)
+        rows["sales_lag_1"] = recent[-1]
+        rows["sales_lag_7"] = recent[-7] if len(recent) >= 7 else recent.mean()
+        rows["sales_lag_14"] = recent[-14] if len(recent) >= 14 else recent.mean()
+        rows["sales_roll_mean_7"] = recent[-7:].mean()
+        rows["sales_roll_std_7"] = recent[-7:].std(ddof=1) if len(recent[-7:]) > 1 else 0.0
+        rows["sales_roll_mean_14"] = recent.mean()
+
+    if weather_condition:
+        encoder_path = MODELS_DIR / "label_encoders.pkl"
+        with encoder_path.open("rb") as encoder_file:
+            encoder = pickle.load(encoder_file)["weather_condition"]
+        if weather_condition not in set(encoder.classes_):
+            raise ValueError(f"Unsupported weather_condition: {weather_condition}")
+        rows["weather_condition_enc"] = int(encoder.transform([weather_condition])[0])
+
+    prediction = float(np.clip(artefact["model"].predict(rows[features].fillna(0))[0], 0, None))
+    return {
+        "forecasted_demand_per_day": round(prediction, 2),
+        "forecasted_demand_7d": int(np.ceil(prediction * 7)),
+        "forecast_date": target.date().isoformat(),
+        "is_forecast_holiday": bool(rows["is_holiday"].iloc[0]),
+        "holiday_name": _holiday_name(target),
+        "school_term": _school_term(target),
+        "school_event": _school_event(target),
+        "expected_weather": weather_condition or _expected_weather(target)["weather_condition"],
+        "forecast_model": "xgboost_demand",
+    }
+
+
 def _forecast_next_day(df: pd.DataFrame, target_date: Optional[pd.Timestamp] = None) -> pd.DataFrame:
     """Predict tomorrow per product using the trained demand model and event context."""
     target = target_date or (_current_kenya_date() + pd.Timedelta(days=1))
@@ -343,6 +402,51 @@ async def get_product_recommendation(product_id: str):
     if match.empty:
         raise HTTPException(404, "Product not found in the latest report.")
     return {key: to_native(value) for key, value in match.iloc[0].to_dict().items()}
+
+
+@app.post("/predict/scenario")
+async def predict_scenario(
+    product_id: str = Form(...),
+    target_date: Optional[str] = Form(None),
+    current_stock: float = Form(...),
+    recent_sales: str = Form(""),
+    avg_daily: Optional[float] = Form(None),
+    std_daily: Optional[float] = Form(None),
+    weather_condition: Optional[str] = Form(None),
+):
+    """Forecast an owner-entered scenario and return the complete restock decision."""
+    try:
+        if current_stock < 0:
+            raise ValueError("current_stock cannot be negative")
+        sales = _parse_recent_sales(recent_sales)
+        if not sales and (avg_daily is None or avg_daily < 0):
+            raise ValueError("Enter recent_sales or a non-negative avg_daily")
+        if sales:
+            scenario_avg = float(np.mean(sales))
+            scenario_std = float(np.std(sales, ddof=1)) if len(sales) > 1 else 0.0
+        else:
+            scenario_avg = float(avg_daily)
+            scenario_std = float(std_daily or 0.0)
+        target = pd.Timestamp(target_date) if target_date else _current_kenya_date() + pd.Timedelta(days=1)
+        forecast = _scenario_forecast(product_id, target, sales, weather_condition)
+        product = pd.read_csv(PROCESSED_DATASET).query("product_id == @product_id").iloc[0]
+        safety_stock = round(SAFETY_STOCK_FACTOR * max(scenario_std, 0.5) * np.sqrt(DEFAULT_LEAD_TIME_DAYS), 1)
+        reorder_point = round(scenario_avg * DEFAULT_LEAD_TIME_DAYS + safety_stock, 1)
+        reorder_needed = current_stock <= reorder_point
+        order_qty = max(0, int(np.ceil(forecast["forecasted_demand_7d"] + safety_stock - current_stock))) if reorder_needed else 0
+        days_left = round(current_stock / scenario_avg, 1) if scenario_avg > 0 else 0.0
+        status = "OUT OF STOCK" if current_stock == 0 else "CRITICALLY LOW" if days_left < 3 else "LOW" if reorder_needed else "OK"
+        priority = "URGENT" if status in {"OUT OF STOCK", "CRITICALLY LOW"} else "HIGH" if status == "LOW" and bool(product["is_perishable"]) else "MEDIUM" if status == "LOW" else "OK"
+        return to_native({
+            "product_id": product_id, "product_name": product["product_name"], "category": product["category"],
+            "current_stock": current_stock, "avg_daily": round(scenario_avg, 2), "std_daily": round(scenario_std, 2),
+            "safety_stock": safety_stock, "reorder_point": reorder_point, "days_of_stock_remaining": days_left,
+            "stock_status": status, "reorder_needed": reorder_needed, "recommended_order_qty": order_qty,
+            "estimated_order_cost_kes": round(order_qty * float(product["cost_price"]), 2),
+            "replenishment_priority": priority, **forecast,
+        })
+    except (ValueError, FileNotFoundError, IndexError) as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
 
 
 @app.post("/predict/replenishment")
